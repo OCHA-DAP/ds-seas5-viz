@@ -36,3 +36,23 @@ def load_emdat(
 
     with duckdb.connect() as conn:
         return conn.execute(query).df()
+
+
+def load_emdat_yearly(
+    iso3: str = None,
+    disaster_type: str = None,
+    historic: bool = False,
+    col: str = "Total Affected",
+):
+    df = load_emdat(iso3=iso3, disaster_type=disaster_type, historic=historic)
+
+    df_emdat_yearly = df.groupby("Start Year")[col].sum().reset_index()
+    df_emdat_yearly = df_emdat_yearly.set_index("Start Year")
+    df_emdat_yearly = df_emdat_yearly.reindex(range(2000, 2025), fill_value=0)
+    df_emdat_yearly = df_emdat_yearly.reset_index().rename(
+        columns={"Start Year": "year"}
+    )
+    if col == "Total Affected":
+        df_emdat_yearly[col] = df_emdat_yearly[col].astype(int)
+
+    return df_emdat_yearly
