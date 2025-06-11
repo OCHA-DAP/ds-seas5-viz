@@ -28,14 +28,15 @@ import pandas as pd
 import numpy as np
 import ocha_stratus as stratus
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 
-from src.datasources import seas5, era5, emdat
+from src.datasources import seas5, era5, emdat, cerf
 ```
 
 ## Set parameters
 
 ```python
-pcode = "ET"
+pcode = "SS"
 issued_month = 5
 valid_months = [7, 8, 9]
 disaster_type = "Flood"
@@ -123,12 +124,30 @@ df_emdat = emdat.load_emdat_yearly(
 )
 ```
 
+### CERF
+
+```python
+df_cerf = cerf.load_cerf_yearly(emergency=disaster_type, iso3=iso3)
+```
+
 ### Combine datasets
 
 ```python
-df_compare = df_seas5.merge(
-    df_era5, on="year", how="outer", suffixes=("_seas5", "_era5")
-).merge(df_emdat, how="outer")
+df_compare = (
+    df_seas5.merge(
+        df_era5, on="year", how="outer", suffixes=("_seas5", "_era5")
+    )
+    .merge(df_emdat, how="outer")
+    .merge(df_cerf, how="outer")
+)
+```
+
+```python
+df_compare.loc[df_compare["year"] < 2006, "allocation"] = "pre-CERF"
+```
+
+```python
+df_compare
 ```
 
 ## Plotting
@@ -143,23 +162,28 @@ col_to_label = {
 
 ```python
 high_color = "royalblue"
+current_color = "mediumorchid"
+cerf_color_mapping = {
+    "Yes": "crimson",
+    "No": "k",
+    "pre-CERF": "gray",
+    np.nan: "k",
+}
 ```
 
 ```python
 def plot_comparison(
     df,
-    xcol,
-    ycol,
-    colorcol=None,
-    sizecol=None,
-    rotation=0,
-    min_year=None,
-    title=None,
+    xcol: str,
+    ycol: str,
+    colorcol: str = None,
+    sizecol: str = None,
+    rotation: int = 0,
+    min_year: int = None,
+    title: str = None,
+    show_terciles: bool = True,
 ):
-    df_ref = df.dropna(subset=[xcol, ycol])
-    ref_min_year = df_ref["year"].min()
-    ref_max_year = df_ref["year"].max()
-    x_thresh, y_thresh = df_ref[[xcol, ycol]].quantile(2 / 3)
+    fig, ax = plt.subplots(dpi=200, figsize=(7, 7))
 
     if min_year is not None:
         df = df[df["year"] >= min_year]
@@ -173,23 +197,47 @@ def plot_comparison(
     xlim = (xmin - padding * xrange, xmax + padding * xrange)
     ylim = (ymin - padding * yrange, ymax + padding * yrange)
 
-    fig, ax = plt.subplots(dpi=200, figsize=(7, 7))
+    if show_terciles:
+        df_ref = df.dropna(subset=[xcol, ycol])
+        ref_min_year = df_ref["year"].min()
+        ref_max_year = df_ref["year"].max()
+        x_thresh, y_thresh = df_ref[[xcol, ycol]].quantile(2 / 3)
+        ax.axvspan(
+            xmin=x_thresh,
+            xmax=xlim[1],
+            facecolor=high_color,
+            alpha=0.1,
+            zorder=-1,
+        )
+        ax.axhspan(
+            ymin=y_thresh,
+            ymax=ylim[1],
+            facecolor=high_color,
+            alpha=0.1,
+            zorder=-1,
+        )
 
-    ax.axvspan(xmin=x_thresh, xmax=xlim[1], facecolor=high_color, alpha=0.1)
-    ax.axhspan(ymin=y_thresh, ymax=ylim[1], facecolor=high_color, alpha=0.1)
-
+    max_bubble_size = 2000
     if sizecol is None:
         sizes = np.full(len(df), 0)
+        max_size_value = None
     else:
-        sizes = df[sizecol].fillna(0) / df[sizecol].max() * 2000
+        sizes = df[sizecol].fillna(0) / df[sizecol].max() * max_bubble_size
+        max_size_value = df[sizecol].max()
 
     if colorcol is None:
         df["color"] = "k"
     else:
-        df["color"] = df[colorcol].map({True: "crimson", False: "royalblue"})
+        df["color"] = df[colorcol].map(cerf_color_mapping)
 
     scatter = ax.scatter(
-        df[xcol], df[ycol], s=sizes, c=df["color"], alpha=0.3, edgecolor="none"
+        df[xcol],
+        df[ycol],
+        s=sizes,
+        c=df["color"],
+        alpha=0.3,
+        edgecolor="none",
+        zorder=2,
     )
 
     for year, row in df.set_index("year").iterrows():
@@ -201,14 +249,16 @@ def plot_comparison(
             va="center",
             color=row["color"],
             rotation=rotation,
+            zorder=3,
         )
 
     if "seas5" in xcol:
         current_val = df.set_index("year").loc[2025][xcol]
         ax.axvline(
             current_val,
-            color="mediumorchid",
+            color=current_color,
             linestyle="--",
+            zorder=-1,
         )
         ax.annotate(
             " 2025 forecast",
@@ -216,7 +266,9 @@ def plot_comparison(
             rotation=90,
             va="bottom",
             ha="right",
-            color="mediumorchid",
+            color=current_color,
+            zorder=-1,
+            fontstyle="italic",
         )
 
     ax.set_xlabel(col_to_label.get(xcol, xcol))
@@ -231,6 +283,62 @@ def plot_comparison(
     ax.set_xlim(xlim)
     ax.set_ylim(ylim)
 
+    # legend
+    legend_x = xlim[0] + xrange * 0.18
+
+    def get_legend_y(row_num):
+        return ylim[1] - yrange * 0.04 - yrange * row_num * 0.03
+
+    ax.annotate(
+        "CERF allocation:",
+        (legend_x, get_legend_y(0)),
+        va="top",
+        fontstyle="italic",
+        fontsize=6,
+    )
+    for i, (label, color) in enumerate(cerf_color_mapping.items()):
+        if str(label) == "nan":
+            continue
+        ax.annotate(
+            label,
+            (legend_x, get_legend_y(i + 1)),
+            va="top",
+            color=color,
+            fontsize=6,
+        )
+    if sizecol is not None:
+        x_legend_bubble = legend_x - xrange * 0.08
+        y_legend_bubble = get_legend_y(2)
+        ax.scatter(
+            [x_legend_bubble],
+            [y_legend_bubble],
+            s=[max_bubble_size],
+            facecolor="none",
+            edgecolor="k",
+            linewidth=0.5,
+        )
+        ax.annotate(
+            f"{sizecol}:\n{max_size_value:,.0f}",
+            (x_legend_bubble, y_legend_bubble),
+            ha="center",
+            va="center",
+            fontstyle="italic",
+            fontsize=6,
+        )
+
+    rect = mpatches.Rectangle(
+        (legend_x - xrange * 0.16, get_legend_y(4.7)),
+        xrange * 0.32,
+        yrange * 0.16,
+        linewidth=0.5,
+        color="white",
+        zorder=0,
+        alpha=0.5,
+    )
+
+    # Add to axes
+    ax.add_patch(rect)
+
     return fig, ax
 ```
 
@@ -241,6 +349,7 @@ fig, ax = plot_comparison(
     xcol="mean_detrended_seas5",
     ycol="mean_detrended_era5",
     sizecol="Total Affected",
+    colorcol="allocation",
     title=f"{adm_name}: {valid_mo_str} observed vs. forecasted rainfall,\n"
     f"since {min_year}",
     min_year=min_year,
