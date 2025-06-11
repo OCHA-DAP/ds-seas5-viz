@@ -21,16 +21,281 @@ def _(mo):
 @app.cell
 def _():
     import calendar
+    from typing import List
 
+    import duckdb
     import matplotlib.patches as mpatches
     import matplotlib.pyplot as plt
     import numpy as np
     import ocha_stratus as stratus
     import pandas as pd
 
-    from src.datasources import cerf, emdat, era5, seas5
+    return List, calendar, duckdb, mpatches, np, pd, plt, stratus
 
-    return calendar, cerf, emdat, era5, mpatches, np, pd, plt, seas5, stratus
+
+@app.cell
+def _(np, pd):
+    def detrend_column(
+        df: pd.DataFrame,
+        col: str,
+        index_col: str = "valid_date",
+        min_index=None,
+        max_index=None,
+    ) -> pd.DataFrame:
+        """
+        Detrend a column in a DataFrame using linear regression (via NumPy).
+
+        Parameters:
+        -----------
+        df : pd.DataFrame
+            The input DataFrame. Must contain a datetime column.
+        col : str
+            The name of the column to detrend.
+        time_col : str
+            The name of the datetime column. Default is "valid_date".
+
+        Returns:
+        --------
+        pd.DataFrame
+            Copy of the input DataFrame with a new column: <col>_detrended
+        """
+        if min_index is None:
+            min_index = df[index_col].min()
+        if max_index is None:
+            max_index = df[index_col].max()
+
+        df_sorted = df.sort_values(index_col).copy()
+        df_model = df_sorted[
+            (df_sorted[index_col] >= min_index)
+            & (df_sorted[index_col] <= max_index)
+        ]
+
+        x = df_model[index_col]
+        y = df_model[col].values
+
+        # Linear regression fit
+        A = np.vstack([x, np.ones_like(x)]).T
+        a, b = np.linalg.lstsq(A, y, rcond=None)[0]
+
+        trend = a * df_sorted[index_col] + b
+        detrended = df_sorted[col] - trend
+        detrended += y.mean()  # Shift to preserve original mean
+
+        df_sorted[f"{col}_detrended"] = detrended
+
+        return df_sorted
+
+    return (detrend_column,)
+
+
+@app.cell
+def _(List, detrend_column, pd, stratus):
+    # ERA5
+
+    def load_era5(
+        pcode: str,
+        valid_months: List[int] = None,
+    ):
+        if valid_months is None:
+            valid_months = range(1, 13)
+
+        query = """
+        SELECT *
+        FROM public.era5
+        WHERE pcode = %s
+          AND EXTRACT(MONTH FROM valid_date) IN %s
+        """
+        engine = stratus.get_engine("prod")
+        with engine.connect() as conn:
+            df = pd.read_sql(
+                query,
+                conn,
+                params=(pcode, tuple(valid_months)),
+                parse_dates=["valid_date"],
+            )
+        return df
+
+    def aggregate_era5_yearly(
+        df: pd.DataFrame,
+        valid_months: List[int],
+    ):
+        df_monthly = df[df["valid_date"].dt.month.isin(valid_months)]
+        df_yearly = (
+            df_monthly.groupby(df_monthly["valid_date"].dt.year)["mean"]
+            .mean()
+            .reset_index()
+        )
+        df_yearly = df_yearly.rename(columns={"valid_date": "year"})
+        df_yearly = detrend_column(df_yearly, "mean", index_col="year")
+        return df_yearly
+
+    return aggregate_era5_yearly, load_era5
+
+
+@app.cell
+def _(List, detrend_column, pd, stratus):
+    # SEAS5
+
+    def load_seas5(
+        pcode: str,
+        issued_months: List[int] = None,
+        valid_months: List[int] = None,
+    ):
+        if issued_months is None:
+            issued_months = range(1, 13)  # Default to all months
+        if valid_months is None:
+            valid_months = range(1, 13)
+
+        query = """
+        SELECT *
+        FROM public.seas5
+        WHERE pcode = %s
+          AND EXTRACT(MONTH FROM issued_date) IN %s
+          AND EXTRACT(MONTH FROM valid_date) IN %s
+        """
+        engine = stratus.get_engine("prod")
+        with engine.connect() as conn:
+            df = pd.read_sql(
+                query,
+                conn,
+                params=(pcode, tuple(issued_months), tuple(valid_months)),
+                parse_dates=["valid_date", "issued_date"],
+            )
+        return df
+
+    def aggregate_seas5_yearly(
+        df: pd.DataFrame,
+        issued_month: int,
+        valid_months: List[int],
+    ):
+        df_monthly = df[
+            (df["issued_date"].dt.month == issued_month)
+            & (df["valid_date"].dt.month.isin(valid_months))
+        ]
+        df_yearly = (
+            df_monthly.groupby(df_monthly["valid_date"].dt.year)["mean"]
+            .mean()
+            .reset_index()
+        )
+        df_yearly = df_yearly.rename(columns={"valid_date": "year"})
+        max_year = df_yearly["year"].max()
+        df_yearly = detrend_column(
+            df_yearly, "mean", index_col="year", max_index=max_year - 1
+        )
+        return df_yearly
+
+    return aggregate_seas5_yearly, load_seas5
+
+
+@app.cell
+def _(duckdb, stratus):
+    # EM-DAT
+
+    EMDAT_PROC_BLOB_NAME = "emdat/processed/emdat_all.parquet"
+
+    def load_emdat(
+        iso3: str = None, disaster_type: str = None, historic: bool = False
+    ):
+        if iso3 is None and disaster_type is None and historic:
+            return stratus.load_parquet_from_blob(
+                EMDAT_PROC_BLOB_NAME, container_name="global"
+            )
+
+        url = (
+            stratus.get_container_client(container_name="global")
+            .get_blob_client(EMDAT_PROC_BLOB_NAME)
+            .url
+        )
+
+        filters = []
+        if iso3 is not None:
+            filters.append(f"ISO = '{iso3.upper()}'")
+        if disaster_type is not None:
+            filters.append(f"\"Disaster Type\" = '{disaster_type}'")
+        if not historic:
+            filters.append("Historic = 'No'")
+
+        where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+
+        query = f"""
+        SELECT *
+        FROM read_parquet('{url}')
+        {where_clause}
+        """
+
+        with duckdb.connect() as conn:
+            return conn.execute(query).df()
+
+    def load_emdat_yearly(
+        iso3: str = None,
+        disaster_type: str = None,
+        historic: bool = False,
+        col: str = "Total Affected",
+    ):
+        df = load_emdat(
+            iso3=iso3, disaster_type=disaster_type, historic=historic
+        )
+
+        df_emdat_yearly = df.groupby("Start Year")[col].sum().reset_index()
+        df_emdat_yearly = df_emdat_yearly.set_index("Start Year")
+        df_emdat_yearly = df_emdat_yearly.reindex(
+            range(2000, 2025), fill_value=0
+        )
+        df_emdat_yearly = df_emdat_yearly.reset_index().rename(
+            columns={"Start Year": "year"}
+        )
+        if col == "Total Affected":
+            df_emdat_yearly[col] = df_emdat_yearly[col].astype(int)
+
+        return df_emdat_yearly
+
+    return (load_emdat_yearly,)
+
+
+@app.cell
+def _(pd):
+    # CERF
+    # just a dummy function hard coding values until we load the actual thing
+    def load_cerf_raw():
+        columns = [
+            "iso3",
+            "Allocation date",
+            "Amount in US$",
+        ]
+        data = [["ETH", f"{x}-01-01", 1] for x in [2023, 2020, 2018, 2006]] + [
+            ["SSD", f"{x}-01-01", 1] for x in [2019, 2020, 2021, 2022, 2024]
+        ]
+
+        df = pd.DataFrame(data, columns=columns)
+        df["Allocation date"] = pd.to_datetime(df["Allocation date"])
+        df["Window"] = "Rapid Response"
+        df["Emergency"] = "Flood"
+        return df
+
+    def load_cerf_yearly(
+        emergency: str, iso3: str, window: str = "Rapid Response"
+    ):
+        df_raw = load_cerf_raw()
+        df = df_raw[
+            (df_raw["Emergency"] == emergency)
+            & (df_raw["Window"] == window)
+            & (df_raw["iso3"] == iso3)
+        ].copy()
+        df["year"] = pd.to_datetime(df["Allocation date"]).dt.year
+        df_yearly = df.groupby("year")["Amount in US$"].sum().reset_index()
+        df_yearly = df_yearly.set_index("year")
+        df_yearly = df_yearly.reindex(
+            range(2006, 2025), fill_value=0
+        ).reset_index()
+        df_yearly["allocation"] = df_yearly["Amount in US$"].apply(
+            lambda x: "Yes" if x > 0 else "No"
+        )
+        # just set all to pre-CERF if haven't been filled in
+        if df.empty:
+            df_yearly["allocation"] = "pre-CERF"
+        return df_yearly
+
+    return (load_cerf_yearly,)
 
 
 @app.cell
@@ -152,30 +417,28 @@ def _(pcode, pd, stratus):
 
 
 @app.cell
-def _(pcode, seas5):
-    df_seas5_all = seas5.load_seas5(pcode=pcode)
+def _(load_seas5, pcode):
+    df_seas5_all = load_seas5(pcode=pcode)
     return (df_seas5_all,)
 
 
 @app.cell
-def _(df_seas5_all, issued_month, seas5, valid_months):
-    df_seas5 = seas5.aggregate_seas5_yearly(
+def _(aggregate_seas5_yearly, df_seas5_all, issued_month, valid_months):
+    df_seas5 = aggregate_seas5_yearly(
         df_seas5_all, issued_month=issued_month, valid_months=valid_months
     )
     return (df_seas5,)
 
 
 @app.cell
-def _(era5, pcode):
-    df_era5_all = era5.load_era5(pcode=pcode)
+def _(load_era5, pcode):
+    df_era5_all = load_era5(pcode=pcode)
     return (df_era5_all,)
 
 
 @app.cell
-def _(df_era5_all, era5, valid_months):
-    df_era5 = era5.aggregate_era5_yearly(
-        df_era5_all, valid_months=valid_months
-    )
+def _(aggregate_era5_yearly, df_era5_all, valid_months):
+    df_era5 = aggregate_era5_yearly(df_era5_all, valid_months=valid_months)
     return (df_era5,)
 
 
@@ -200,16 +463,16 @@ def _(calendar, df_era5_monthly):
 
 
 @app.cell
-def _(disaster_type, emdat, impact_col, iso3):
-    df_emdat = emdat.load_emdat_yearly(
+def _(disaster_type, impact_col, iso3, load_emdat_yearly):
+    df_emdat = load_emdat_yearly(
         iso3=iso3, disaster_type=disaster_type, col=impact_col
     )
     return (df_emdat,)
 
 
 @app.cell
-def _(cerf, disaster_type, iso3):
-    df_cerf = cerf.load_cerf_yearly(emergency=disaster_type, iso3=iso3)
+def _(disaster_type, iso3, load_cerf_yearly):
+    df_cerf = load_cerf_yearly(emergency=disaster_type, iso3=iso3)
     return (df_cerf,)
 
 
