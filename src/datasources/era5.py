@@ -8,13 +8,10 @@ from src.utils.timeseries import detrend_column
 
 def load_era5(
     pcode: str,
-    valid_months: List[int],
+    valid_months: List[int] = None,
 ):
-    for valid_month in valid_months:
-        if valid_month < 1 or valid_month > 12:
-            raise ValueError(
-                f"Invalid month: {valid_month}. Must be between 1 and 12."
-            )
+    if valid_months is None:
+        valid_months = range(1, 13)
 
     query = """
     SELECT *
@@ -33,11 +30,11 @@ def load_era5(
     return df
 
 
-def load_era5_yearly(
-    pcode: str,
+def aggregate_era5_yearly(
+    df: pd.DataFrame,
     valid_months: List[int],
 ):
-    df_monthly = load_era5(pcode=pcode, valid_months=valid_months)
+    df_monthly = df[df["valid_date"].dt.month.isin(valid_months)]
     df_yearly = (
         df_monthly.groupby(df_monthly["valid_date"].dt.year)["mean"]
         .mean()

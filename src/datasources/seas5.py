@@ -8,30 +8,19 @@ from src.utils.timeseries import detrend_column
 
 def load_seas5(
     pcode: str,
-    issued_month: int,
-    valid_months: List[int],
+    issued_months: List[int] = None,
+    valid_months: List[int] = None,
 ):
-    if issued_month < 1 or issued_month > 12:
-        raise ValueError(
-            f"Invalid issued month: {issued_month}. Must be between 1 and 12."
-        )
-    for valid_month in valid_months:
-        if valid_month < 1 or valid_month > 12:
-            raise ValueError(
-                f"Invalid month: {valid_month}. Must be between 1 and 12."
-            )
-        lt = (valid_month - issued_month) % 12
-        if lt > 6:
-            raise ValueError(
-                f"Invalid lead time: {lt} (from valid month {valid_month}). "
-                "Must be 6 months or less."
-            )
+    if issued_months is None:
+        issued_months = range(1, 13)  # Default to all months
+    if valid_months is None:
+        valid_months = range(1, 13)
 
     query = """
     SELECT *
     FROM public.seas5
     WHERE pcode = %s
-      AND EXTRACT(MONTH FROM issued_date) = %s
+      AND EXTRACT(MONTH FROM issued_date) IN %s
       AND EXTRACT(MONTH FROM valid_date) IN %s
     """
     engine = stratus.get_engine("prod")
@@ -39,20 +28,21 @@ def load_seas5(
         df = pd.read_sql(
             query,
             conn,
-            params=(pcode, issued_month, tuple(valid_months)),
+            params=(pcode, tuple(issued_months), tuple(valid_months)),
             parse_dates=["valid_date", "issued_date"],
         )
     return df
 
 
-def load_seas5_yearly(
-    pcode: str,
+def aggregate_seas5_yearly(
+    df: pd.DataFrame,
     issued_month: int,
     valid_months: List[int],
 ):
-    df_monthly = load_seas5(
-        pcode=pcode, issued_month=issued_month, valid_months=valid_months
-    )
+    df_monthly = df[
+        (df["issued_date"].dt.month == issued_month)
+        & (df["valid_date"].dt.month.isin(valid_months))
+    ]
     df_yearly = (
         df_monthly.groupby(df_monthly["valid_date"].dt.year)["mean"]
         .mean()

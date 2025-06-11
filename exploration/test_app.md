@@ -36,9 +36,9 @@ from src.datasources import seas5, era5, emdat, cerf
 ## Set parameters
 
 ```python
-pcode = "SS"
+pcode = "ET"
 issued_month = 5
-valid_months = [7, 8, 9]
+valid_months = [6, 7, 8]
 disaster_type = "Flood"
 impact_col = "Total Affected"
 ```
