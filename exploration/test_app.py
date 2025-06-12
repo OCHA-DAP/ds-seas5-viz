@@ -743,20 +743,21 @@ def _(
                 zorder=3,
             )
         if "seas5" in xcol:
-            current_val = df.set_index("year").loc[2025][xcol]
-            _ax.axvline(
-                current_val, color=current_color, linestyle="--", zorder=-1
-            )
-            _ax.annotate(
-                " 2025 forecast",
-                (current_val, ylim[0]),
-                rotation=90,
-                va="bottom",
-                ha="right",
-                color=current_color,
-                zorder=-1,
-                fontstyle="italic",
-            )
+            if 2025 in df.index:
+                current_val = df.set_index("year").loc[2025][xcol]
+                _ax.axvline(
+                    current_val, color=current_color, linestyle="--", zorder=-1
+                )
+                _ax.annotate(
+                    " 2025 forecast",
+                    (current_val, ylim[0]),
+                    rotation=90,
+                    va="bottom",
+                    ha="right",
+                    color=current_color,
+                    zorder=-1,
+                    fontstyle="italic",
+                )
         _ax.set_xlabel(col_to_label.get(xcol, xcol))
         _ax.set_ylabel(col_to_label.get(ycol, ycol))
         if title is not None:
