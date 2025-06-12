@@ -336,14 +336,20 @@ def _(pd, stratus):
 @app.cell
 def _(adm0_options, calendar, mo):
     adm0_dropdown = mo.ui.dropdown(
-        options=adm0_options, label="Select country", value="Ethiopia"
+        options=adm0_options, label="Select country:", value="Ethiopia"
     )
     issued_month_dropdown = mo.ui.dropdown(
         options={calendar.month_abbr[x]: x for x in range(1, 13)},
-        label="Select issued month",
+        label="Select issued month:",
         value="May",
     )
     return adm0_dropdown, issued_month_dropdown
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""### Administrative division""")
+    return
 
 
 @app.cell
@@ -355,7 +361,7 @@ def _(adm0_dropdown):
 @app.cell
 def _(adm0_dropdown, df_adms):
     adm0_pcode = adm0_dropdown.value
-    adm0_name = adm0_dropdown.text
+    adm0_name = adm0_dropdown.selected_key
     iso3 = df_adms[df_adms["pcode"] == adm0_pcode].iloc[0]["iso3"]
     return adm0_name, adm0_pcode, iso3
 
@@ -363,7 +369,7 @@ def _(adm0_dropdown, df_adms):
 @app.cell
 def _(mo):
     adm_level_dropdown = mo.ui.dropdown(
-        options=[0, 1, 2], label="Select admin level", value=0
+        options=[0, 1, 2], label="Select admin level:", value=0
     )
     return (adm_level_dropdown,)
 
@@ -375,6 +381,14 @@ def _(adm_level_dropdown):
 
 
 @app.cell
+def _(mo):
+    mo.md(
+        r"""_Note that EM-DAT data and CERF allocations are only at a national-level, so may not correspond to the specific subnational adminitrative division selected._"""
+    )
+    return
+
+
+@app.cell
 def _(adm0_pcode, adm_level_dropdown, df_adm1, iso3, mo):
     adm_level = adm_level_dropdown.value
     if adm_level > 0 and adm0_pcode is not None:
@@ -382,13 +396,12 @@ def _(adm0_pcode, adm_level_dropdown, df_adm1, iso3, mo):
             row["name"]: row["pcode"]
             for _, row in df_adm1[df_adm1["iso3"] == iso3].iterrows()
         }
-        adm1_dropdown = mo.ui.dropdown(
-            options=adm1_options, label="Select admin1", value=None
-        )
     else:
-        adm1_dropdown = mo.ui.dropdown(
-            options=[], label="Select admin1", value=None
-        )
+        adm1_options = []
+
+    adm1_dropdown = mo.ui.dropdown(
+        options=adm1_options, label="Select admin1:", value=None
+    )
 
     return adm1_dropdown, adm_level
 
@@ -402,7 +415,7 @@ def _(adm1_dropdown):
 @app.cell
 def _(adm1_dropdown):
     adm1_pcode = adm1_dropdown.value
-    adm1_name = adm1_dropdown.text
+    adm1_name = adm1_dropdown.selected_key
     return adm1_name, adm1_pcode
 
 
@@ -416,11 +429,11 @@ def _(adm1_pcode, adm_level, df_adm2, mo):
             ].iterrows()
         }
         adm2_dropdown = mo.ui.dropdown(
-            options=adm2_options, label="Select admin2", value=None
+            options=adm2_options, label="Select admin2:", value=None
         )
     else:
         adm2_dropdown = mo.ui.dropdown(
-            options=[], label="Select admin2", value=None
+            options=[], label="Select admin2:", value=None
         )
     return (adm2_dropdown,)
 
@@ -434,7 +447,7 @@ def _(adm2_dropdown):
 @app.cell
 def _(adm2_dropdown):
     adm2_pcode = adm2_dropdown.value
-    adm2_name = adm2_dropdown.text
+    adm2_name = adm2_dropdown.selected_key
     return adm2_name, adm2_pcode
 
 
@@ -452,12 +465,22 @@ def _(
         pcode = adm0_pcode
         adm_name_str = adm0_name
     elif adm_level == 1:
+        if adm1_pcode is None:
+            raise ValueError("adm1 not set")
         pcode = adm1_pcode
         adm_name_str = f"{adm1_name}, {adm0_name}"
     elif adm_level == 2:
+        if adm2_pcode is None:
+            raise ValueError("adm2 not set")
         pcode = adm2_pcode
         adm_name_str = f"{adm2_name}, {adm1_name}, {adm0_name}"
     return adm_name_str, pcode
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""### Months""")
+    return
 
 
 @app.cell
@@ -474,11 +497,14 @@ def _(issued_month_dropdown):
 
 @app.cell
 def _(calendar, issued_month, mo):
-    valid_month_options = [issued_month + x for x in range(7)]
+    valid_month_options = [(issued_month + x - 1) % 12 + 1 for x in range(7)]
     valid_month_widget = mo.ui.multiselect(
         options={calendar.month_abbr[x]: x for x in valid_month_options},
-        label="Select valid months",
-        value=["Jul", "Aug", "Sep"],
+        label="Select valid months:",
+        value=[
+            calendar.month_abbr[(issued_month + x - 1) % 12 + 1]
+            for x in range(1, 4)
+        ],
     )
     valid_month_widget
     return (valid_month_widget,)
@@ -493,16 +519,20 @@ def _(valid_month_widget):
 @app.cell
 def _(calendar, issued_month, valid_months):
     if len(valid_months) < 3:
-        valid_mo_str = "-".join(
-            [calendar.month_abbr[x] for x in sorted(valid_months)]
-        )
+        valid_mo_str = "-".join([calendar.month_abbr[x] for x in valid_months])
     else:
         valid_mo_str = "".join(
-            [calendar.month_abbr[x][0] for x in sorted(valid_months)]
+            [calendar.month_abbr[x][0] for x in valid_months]
         )
 
     issued_mo_str = calendar.month_abbr[issued_month]
     return issued_mo_str, valid_mo_str
+
+
+@app.cell
+def _(mo, valid_mo_str):
+    mo.md(f"""Selected valid months: **{valid_mo_str}**""")
+    return
 
 
 @app.cell
@@ -584,11 +614,16 @@ def _(df_compare):
 
 
 @app.cell
-def _(issued_mo_str):
+def _(mo):
+    mo.md(r"""## Plot""")
+    return
+
+
+@app.cell
+def _():
     col_to_label = {
-        "mean_detrended_seas5": "Forecasted mean daily rainfall, detrended, "
-        f"issued {issued_mo_str} (mm) [SEAS5]",
-        "mean_detrended_era5": "Observed mean daily rainfall, detrended (mm) [ERA5]",
+        "mean_detrended_seas5": "Forecasted mean daily rainfall (mm) [SEAS5]",
+        "mean_detrended_era5": "Observed mean daily rainfall (mm) [ERA5]",
     }
     return (col_to_label,)
 
@@ -650,12 +685,31 @@ def _(
                 alpha=0.1,
                 zorder=-1,
             )
+            _ax.annotate(
+                "  upper tercile",
+                (x_thresh, ylim[0]),
+                color=high_color,
+                zorder=-1,
+                fontsize=8,
+                rotation=90,
+                fontstyle="italic",
+                alpha=0.5,
+            )
             _ax.axhspan(
                 ymin=y_thresh,
                 ymax=ylim[1],
                 facecolor=high_color,
                 alpha=0.1,
                 zorder=-1,
+            )
+            _ax.annotate(
+                "  upper tercile",
+                (xlim[0], y_thresh),
+                color=high_color,
+                zorder=-1,
+                fontsize=8,
+                fontstyle="italic",
+                alpha=0.5,
             )
         max_bubble_size = 2000
         if sizecol is None:
@@ -768,7 +822,7 @@ def _(
 
 
 @app.cell
-def _(adm_name_str, df_compare, plot_comparison, valid_mo_str):
+def _(adm_name_str, df_compare, issued_mo_str, plot_comparison, valid_mo_str):
     min_year = 2000
     _fig, _ax = plot_comparison(
         df_compare,
@@ -776,10 +830,10 @@ def _(adm_name_str, df_compare, plot_comparison, valid_mo_str):
         ycol="mean_detrended_era5",
         sizecol="Total Affected",
         colorcol="allocation",
-        title=f"{adm_name_str}: {valid_mo_str} observed vs. forecasted rainfall,\nsince {min_year}",
+        title=f"{adm_name_str} — {valid_mo_str} observed vs. forecasted rainfall\nIssue month: {issued_mo_str}",
         min_year=min_year,
     )
-    _ax
+    _fig
     return
 
 
@@ -789,11 +843,12 @@ def _(mo):
         r"""
     Notes on reading the plot:
 
-    - The size of the bubbles corresponds to the total impact from "Flood" events in the EM-DAT database during that year.
+    - The size of the bubbles corresponds to the total impact from "Flood" events in the EM-DAT database during that year. The legend shows the size of the largest bubble, and the corresponding maximum impact.
     - Bubbles in red denote years with at least one "Rapid Response" CERF allocation for a "Flood" during that year. **Note that this has only been added for Ethiopia and South Sudan so far, all other countries will just show "pre-CERF".**
     - The blue zones at the top and to the right correspond to the upper tercile of the distribution for the reanalysis and reforecast respectively.
-    - A stronger correlation between the reanalysis and the reforecast denotes a better forecast skill for this issue month / valid months / geography combination.
-    - Both the reanalysis and reforecast have been de-trended.
+    - A stronger correlation between the reanalysis and the reforecast would indicate a better forecast skill for this issue month / valid months / geography combination.
+    - Both the reanalysis and reforecast have been de-trended (based on the full reference period 1981-2024).
+    - To avoid cluttering the plot and to only show years for which there is EM-DAT data, only years since 2000 are shown.
     """
     )
     return
@@ -819,6 +874,7 @@ def _(adm_name_str, df_era5_all, df_era5_monthly, max_full_year, plt):
     _ax.spines["top"].set_visible(False)
     _ax.spines["right"].set_visible(False)
     _ax
+
     return
 
 
