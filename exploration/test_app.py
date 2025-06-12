@@ -16,7 +16,7 @@ def _(mo):
         r"""
     # SEAS5-ERA5-EMDAT explorer
 
-    This app compares SEAS5 seasonal forecasts with ERA5 reanalysis and EM-DAT impact. Currently it is set only to "Flood" mode, meaning it shows the historical impact from flooding and the above-normal rainfall tercile.
+    This app compares SEAS5 seasonal forecasts with ERA5 reanalysis and EM-DAT impact.
     """
     )
     return
@@ -178,11 +178,11 @@ def _(List, detrend_column, pd, stratus):
             & (df["valid_date"].dt.month.isin(valid_months))
         ]
         df_yearly = (
-            df_monthly.groupby(df_monthly["valid_date"].dt.year)["mean"]
+            df_monthly.groupby(df_monthly["issued_date"].dt.year)["mean"]
             .mean()
             .reset_index()
         )
-        df_yearly = df_yearly.rename(columns={"valid_date": "year"})
+        df_yearly = df_yearly.rename(columns={"issued_date": "year"})
         max_year = df_yearly["year"].max()
         df_yearly = detrend_column(
             df_yearly, "mean", index_col="year", max_index=max_year - 1
@@ -536,6 +536,38 @@ def _(mo, valid_mo_str):
 
 
 @app.cell
+def _(mo):
+    mo.md(r"""### Hazard""")
+    return
+
+
+@app.cell
+def _(mo):
+    hazard_selector = mo.ui.radio(options=["Flood", "Drought"], value="Flood")
+    return (hazard_selector,)
+
+
+@app.cell
+def _(hazard_selector):
+    hazard_selector
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""_Note that EM-DAT data and CERF allocations are only currently shown for "Flood"._"""
+    )
+    return
+
+
+@app.cell
+def _(hazard_selector):
+    hazard_mode = hazard_selector.value
+    return (hazard_mode,)
+
+
+@app.cell
 def _(load_seas5, pcode):
     df_seas5_all = load_seas5(pcode=pcode)
     return (df_seas5_all,)
@@ -630,7 +662,7 @@ def _():
 
 @app.cell
 def _(np):
-    high_color = "royalblue"
+    tercile_colors = {"upper": "royalblue", "lower": "chocolate"}
     current_color = "mediumorchid"
     cerf_color_mapping = {
         "Yes": "crimson",
@@ -638,7 +670,7 @@ def _(np):
         "pre-CERF": "#595959",
         np.nan: "k",
     }
-    return cerf_color_mapping, current_color, high_color
+    return cerf_color_mapping, current_color, tercile_colors
 
 
 @app.cell
@@ -646,10 +678,10 @@ def _(
     cerf_color_mapping,
     col_to_label,
     current_color,
-    high_color,
     mpatches,
     np,
     plt,
+    tercile_colors,
 ):
     def plot_comparison(
         df,
@@ -660,7 +692,8 @@ def _(
         rotation: int = 0,
         min_year: int = None,
         title: str = None,
-        show_terciles: bool = True,
+        show_high_tercile: bool = True,
+        show_low_tercile: bool = False,
     ):
         _fig, _ax = plt.subplots(dpi=200, figsize=(7, 7))
         if min_year is not None:
@@ -673,44 +706,57 @@ def _(
         yrange = ymax - ymin
         xlim = (xmin - padding * xrange, xmax + padding * xrange)
         ylim = (ymin - padding * yrange, ymax + padding * yrange)
-        if show_terciles:
+        if show_high_tercile and show_low_tercile:
+            tercile_alpha = 0.05
+        else:
+            tercile_alpha = 0.1
+
+        def show_tercile(level):
             df_ref = df.dropna(subset=[xcol, ycol])
-            # ref_min_year = df_ref["year"].min()
-            # ref_max_year = df_ref["year"].max()
-            x_thresh, y_thresh = df_ref[[xcol, ycol]].quantile(2 / 3)
+            q = 2 / 3 if level == "upper" else 1 / 3
+            x_thresh, y_thresh = df_ref[[xcol, ycol]].quantile(q)
+            color = tercile_colors[level]
             _ax.axvspan(
-                xmin=x_thresh,
-                xmax=xlim[1],
-                facecolor=high_color,
-                alpha=0.1,
-                zorder=-1,
+                xmin=x_thresh if level == "upper" else xlim[0],
+                xmax=xlim[1] if level == "upper" else x_thresh,
+                facecolor=color,
+                alpha=tercile_alpha,
+                zorder=-2,
             )
             _ax.annotate(
-                "  upper tercile",
+                f"  {level} tercile",
                 (x_thresh, ylim[0]),
-                color=high_color,
+                color=color,
                 zorder=-1,
                 fontsize=8,
                 rotation=90,
                 fontstyle="italic",
                 alpha=0.5,
+                ha="left" if level == "upper" else "right",
             )
             _ax.axhspan(
-                ymin=y_thresh,
-                ymax=ylim[1],
-                facecolor=high_color,
-                alpha=0.1,
-                zorder=-1,
+                ymin=y_thresh if level == "upper" else ylim[0],
+                ymax=ylim[1] if level == "upper" else y_thresh,
+                facecolor=color,
+                alpha=tercile_alpha,
+                zorder=-2,
             )
             _ax.annotate(
-                "  upper tercile",
+                f"  {level} tercile",
                 (xlim[0], y_thresh),
-                color=high_color,
+                color=color,
                 zorder=-1,
                 fontsize=8,
                 fontstyle="italic",
                 alpha=0.5,
+                va="bottom" if level == "upper" else "top",
             )
+
+        if show_high_tercile:
+            show_tercile("upper")
+        if show_low_tercile:
+            show_tercile("lower")
+
         max_bubble_size = 2000
         if sizecol is None:
             sizes = np.full(len(df), 0)
@@ -766,74 +812,95 @@ def _(
         _ax.spines["right"].set_visible(False)
         _ax.set_xlim(xlim)
         _ax.set_ylim(ylim)
-        legend_x = xlim[0] + xrange * 0.18
+        if colorcol is not None and sizecol is not None:
+            legend_x = xlim[0] + xrange * 0.18
 
-        def get_legend_y(row_num):
-            return ylim[1] - yrange * 0.04 - yrange * row_num * 0.03
+            def get_legend_y(row_num):
+                return ylim[1] - yrange * 0.04 - yrange * row_num * 0.03
 
-        _ax.annotate(
-            "CERF allocation:",
-            (legend_x, get_legend_y(0)),
-            va="top",
-            fontstyle="italic",
-            fontsize=6,
-        )
-        for i, (label, color) in enumerate(cerf_color_mapping.items()):
-            if str(label) == "nan":
-                continue
             _ax.annotate(
-                label,
-                (legend_x, get_legend_y(i + 1)),
+                "CERF allocation:",
+                (legend_x, get_legend_y(0)),
                 va="top",
-                color=color,
-                fontsize=6,
-            )
-        if sizecol is not None:
-            x_legend_bubble = legend_x - xrange * 0.08
-            y_legend_bubble = get_legend_y(2)
-            _ax.scatter(
-                [x_legend_bubble],
-                [y_legend_bubble],
-                s=[max_bubble_size],
-                facecolor="none",
-                edgecolor="k",
-                linewidth=0.5,
-            )
-            _ax.annotate(
-                f"{sizecol}:\n{max_size_value:,.0f}",
-                (x_legend_bubble, y_legend_bubble),
-                ha="center",
-                va="center",
                 fontstyle="italic",
                 fontsize=6,
             )
-        rect = mpatches.Rectangle(
-            (legend_x - xrange * 0.16, get_legend_y(4.7)),
-            xrange * 0.32,
-            yrange * 0.16,
-            linewidth=0.5,
-            color="white",
-            zorder=0,
-            alpha=0.5,
-        )
-        _ax.add_patch(rect)
+            for i, (label, color) in enumerate(cerf_color_mapping.items()):
+                if str(label) == "nan":
+                    continue
+                _ax.annotate(
+                    label,
+                    (legend_x, get_legend_y(i + 1)),
+                    va="top",
+                    color=color,
+                    fontsize=6,
+                )
+            if sizecol is not None:
+                x_legend_bubble = legend_x - xrange * 0.08
+                y_legend_bubble = get_legend_y(2)
+                _ax.scatter(
+                    [x_legend_bubble],
+                    [y_legend_bubble],
+                    s=[max_bubble_size],
+                    facecolor="none",
+                    edgecolor="k",
+                    linewidth=0.5,
+                )
+                _ax.annotate(
+                    f"{sizecol}:\n{max_size_value:,.0f}",
+                    (x_legend_bubble, y_legend_bubble),
+                    ha="center",
+                    va="center",
+                    fontstyle="italic",
+                    fontsize=6,
+                )
+            rect = mpatches.Rectangle(
+                (legend_x - xrange * 0.16, get_legend_y(4.7)),
+                xrange * 0.32,
+                yrange * 0.16,
+                linewidth=0.5,
+                color="white",
+                zorder=0,
+                alpha=0.5,
+            )
+            _ax.add_patch(rect)
         return (_fig, _ax)
 
     return (plot_comparison,)
 
 
 @app.cell
-def _(adm_name_str, df_compare, issued_mo_str, plot_comparison, valid_mo_str):
+def _(
+    adm_name_str,
+    df_compare,
+    hazard_mode,
+    issued_mo_str,
+    plot_comparison,
+    valid_mo_str,
+):
     min_year = 2000
-    _fig, _ax = plot_comparison(
-        df_compare,
-        xcol="mean_detrended_seas5",
-        ycol="mean_detrended_era5",
-        sizecol="Total Affected",
-        colorcol="allocation",
-        title=f"{adm_name_str} — {valid_mo_str} observed vs. forecasted rainfall\nIssue month: {issued_mo_str}",
-        min_year=min_year,
-    )
+
+    if hazard_mode == "Flood":
+        _fig, _ax = plot_comparison(
+            df_compare,
+            xcol="mean_detrended_seas5",
+            ycol="mean_detrended_era5",
+            sizecol="Total Affected",
+            colorcol="allocation",
+            title=f"{adm_name_str} — {valid_mo_str} observed vs. forecasted rainfall\nIssue month: {issued_mo_str}",
+            min_year=min_year,
+            show_high_tercile=True,
+        )
+    else:
+        _fig, _ax = plot_comparison(
+            df_compare,
+            xcol="mean_detrended_seas5",
+            ycol="mean_detrended_era5",
+            title=f"{adm_name_str} — {valid_mo_str} observed vs. forecasted rainfall\nIssue month: {issued_mo_str}",
+            min_year=2000,
+            show_high_tercile=False,
+            show_low_tercile=True,
+        )
     _fig
     return
 
@@ -844,9 +911,9 @@ def _(mo):
         r"""
     Notes on reading the plot:
 
-    - The size of the bubbles corresponds to the total impact from "Flood" events in the EM-DAT database during that year. The legend shows the size of the largest bubble, and the corresponding maximum impact.
-    - Bubbles in red denote years with at least one "Rapid Response" CERF allocation for a "Flood" during that year. **Note that this has only been added for Ethiopia and South Sudan so far, all other countries will just show "pre-CERF".**
-    - The blue zones at the top and to the right correspond to the upper tercile of the distribution for the reanalysis and reforecast respectively.
+    - _[Flood only]_ The size of the bubbles corresponds to the total impact from "Flood" events in the EM-DAT database during that year. The legend shows the size of the largest bubble, and the corresponding maximum impact.
+    - _[Flood only]_ Bubbles in red denote years with at least one "Rapid Response" CERF allocation for a "Flood" during that year. **Note that this has only been added for Ethiopia and South Sudan so far, all other countries will just show "pre-CERF".**
+    - The shaded zones at the top, bottom, left, or right of the plots correspond to the upper or lower terciles of the distribution for the reanalysis and reforecast respectively.
     - A stronger correlation between the reanalysis and the reforecast would indicate a better forecast skill for this issue month / valid months / geography combination.
     - Both the reanalysis and reforecast have been de-trended (based on the full reference period 1981-2024).
     - To avoid cluttering the plot and to only show years for which there is EM-DAT data, only years since 2000 are shown.
@@ -858,6 +925,12 @@ def _(mo):
 @app.cell
 def _(mo):
     mo.md(r"""## Reference""")
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""### Seasonal rainfall""")
     return
 
 
