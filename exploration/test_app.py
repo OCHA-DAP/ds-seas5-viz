@@ -635,7 +635,7 @@ def _(np):
     cerf_color_mapping = {
         "Yes": "crimson",
         "No": "k",
-        "pre-CERF": "gray",
+        "pre-CERF": "#595959",
         np.nan: "k",
     }
     return cerf_color_mapping, current_color, high_color
