@@ -1,16 +1,20 @@
 import marimo
 
 __generated_with = "0.13.15"
-app = marimo.App()
+app = marimo.App(app_title="SEAS5-ERA5-EMDAT")
 
-# flake8: noqa: E501
+
+@app.cell
+def _(mo):
+    mo.image(src="exploration/assets/centre_banner.png", height=100)
+    return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(
         r"""
-    # SEAS5-ERA5-EM-DAT explorer
+    # SEAS5-ERA5-EMDAT explorer
 
     This app compares SEAS5 seasonal forecasts with ERA5 reanalysis and EM-DAT impact. Currently it is set only to "Flood" mode, meaning it shows the historical impact from flooding and the above-normal rainfall tercile.
     """
@@ -24,16 +28,17 @@ def _():
     from typing import List
 
     import duckdb
+    import marimo as mo
     import matplotlib.patches as mpatches
     import matplotlib.pyplot as plt
     import numpy as np
     import ocha_stratus as stratus
     import pandas as pd
 
-    return List, calendar, duckdb, mpatches, np, pd, plt, stratus
+    return List, calendar, duckdb, mo, mpatches, np, pd, plt, stratus
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(np, pd):
     def detrend_column(
         df: pd.DataFrame,
@@ -88,7 +93,7 @@ def _(np, pd):
     return (detrend_column,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(List, detrend_column, pd, stratus):
     # ERA5
 
@@ -132,7 +137,7 @@ def _(List, detrend_column, pd, stratus):
     return aggregate_era5_yearly, load_era5
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(List, detrend_column, pd, stratus):
     # SEAS5
 
@@ -187,7 +192,7 @@ def _(List, detrend_column, pd, stratus):
     return aggregate_seas5_yearly, load_seas5
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(duckdb, stratus):
     # EM-DAT
 
@@ -252,7 +257,7 @@ def _(duckdb, stratus):
     return (load_emdat_yearly,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(pd):
     # CERF
     # just a dummy function hard coding values until we load the actual thing
@@ -298,13 +303,6 @@ def _(pd):
     return (load_cerf_yearly,)
 
 
-@app.cell
-def _():
-    import marimo as mo
-
-    return (mo,)
-
-
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""## Set parameters""")
@@ -320,52 +318,158 @@ def _():
 
 @app.cell
 def _(pd, stratus):
-    df_polygons = pd.read_sql(
-        "SELECT pcode, name, iso3, adm_level FROM public.polygon WHERE adm_level = 0",
+    df_adms = pd.read_sql(
+        "SELECT pcode, name, iso3, adm_level FROM public.polygon ORDER BY name ASC",
         stratus.get_engine(stage="prod"),
     )
-    options = {
-        f"{row['name']} ({row['iso3']})": row["pcode"]
-        for _, row in df_polygons.iterrows()
+    df_adm0 = df_adms.set_index("adm_level").loc[0]
+    df_adm1 = df_adms.set_index("adm_level").loc[1]
+    df_adm2 = df_adms.set_index("adm_level").loc[2]
+    adm0_options = {
+        row["name"]: row["pcode"]
+        for _, row in df_adm0.iterrows()
+        if row["name"] is not None
     }
-    return (options,)
+    return adm0_options, df_adm1, df_adm2, df_adms
 
 
 @app.cell
-def _(calendar, mo, options):
-    pcode_dropdown = mo.ui.dropdown(
-        options=options, label="Select Country", value="Ethiopia (ETH)"
+def _(adm0_options, calendar, mo):
+    adm0_dropdown = mo.ui.dropdown(
+        options=adm0_options, label="Select country", value="Ethiopia"
     )
     issued_month_dropdown = mo.ui.dropdown(
         options={calendar.month_abbr[x]: x for x in range(1, 13)},
         label="Select issued month",
         value="May",
     )
-    return issued_month_dropdown, pcode_dropdown
+    return adm0_dropdown, issued_month_dropdown
 
 
 @app.cell
-def _(issued_month_dropdown):
-    issued_month = issued_month_dropdown.value
-    return (issued_month,)
-
-
-@app.cell
-def _(pcode_dropdown):
-    pcode_dropdown
+def _(adm0_dropdown):
+    adm0_dropdown
     return
 
 
 @app.cell
-def _(pcode_dropdown):
-    pcode = pcode_dropdown.value
-    return (pcode,)
+def _(adm0_dropdown, df_adms):
+    adm0_pcode = adm0_dropdown.value
+    adm0_name = adm0_dropdown.text
+    iso3 = df_adms[df_adms["pcode"] == adm0_pcode].iloc[0]["iso3"]
+    return adm0_name, adm0_pcode, iso3
+
+
+@app.cell
+def _(mo):
+    adm_level_dropdown = mo.ui.dropdown(
+        options=[0, 1, 2], label="Select admin level", value=0
+    )
+    return (adm_level_dropdown,)
+
+
+@app.cell
+def _(adm_level_dropdown):
+    adm_level_dropdown
+    return
+
+
+@app.cell
+def _(adm0_pcode, adm_level_dropdown, df_adm1, iso3, mo):
+    adm_level = adm_level_dropdown.value
+    if adm_level > 0 and adm0_pcode is not None:
+        adm1_options = {
+            row["name"]: row["pcode"]
+            for _, row in df_adm1[df_adm1["iso3"] == iso3].iterrows()
+        }
+        adm1_dropdown = mo.ui.dropdown(
+            options=adm1_options, label="Select admin1", value=None
+        )
+    else:
+        adm1_dropdown = mo.ui.dropdown(
+            options=[], label="Select admin1", value=None
+        )
+
+    return adm1_dropdown, adm_level
+
+
+@app.cell
+def _(adm1_dropdown):
+    adm1_dropdown
+    return
+
+
+@app.cell
+def _(adm1_dropdown):
+    adm1_pcode = adm1_dropdown.value
+    adm1_name = adm1_dropdown.text
+    return adm1_name, adm1_pcode
+
+
+@app.cell
+def _(adm1_pcode, adm_level, df_adm2, mo):
+    if adm_level > 1 and adm1_pcode is not None:
+        adm2_options = {
+            row["name"]: row["pcode"]
+            for _, row in df_adm2[
+                df_adm2["pcode"].str.startswith(adm1_pcode)
+            ].iterrows()
+        }
+        adm2_dropdown = mo.ui.dropdown(
+            options=adm2_options, label="Select admin2", value=None
+        )
+    else:
+        adm2_dropdown = mo.ui.dropdown(
+            options=[], label="Select admin2", value=None
+        )
+    return (adm2_dropdown,)
+
+
+@app.cell
+def _(adm2_dropdown):
+    adm2_dropdown
+    return
+
+
+@app.cell
+def _(adm2_dropdown):
+    adm2_pcode = adm2_dropdown.value
+    adm2_name = adm2_dropdown.text
+    return adm2_name, adm2_pcode
+
+
+@app.cell
+def _(
+    adm0_name,
+    adm0_pcode,
+    adm1_name,
+    adm1_pcode,
+    adm2_name,
+    adm2_pcode,
+    adm_level,
+):
+    if adm_level == 0:
+        pcode = adm0_pcode
+        adm_name_str = adm0_name
+    elif adm_level == 1:
+        pcode = adm1_pcode
+        adm_name_str = f"{adm1_name}, {adm0_name}"
+    elif adm_level == 2:
+        pcode = adm2_pcode
+        adm_name_str = f"{adm2_name}, {adm1_name}, {adm0_name}"
+    return adm_name_str, pcode
 
 
 @app.cell
 def _(issued_month_dropdown):
     issued_month_dropdown
     return
+
+
+@app.cell
+def _(issued_month_dropdown):
+    issued_month = issued_month_dropdown.value
+    return (issued_month,)
 
 
 @app.cell
@@ -399,21 +503,6 @@ def _(calendar, issued_month, valid_months):
 
     issued_mo_str = calendar.month_abbr[issued_month]
     return issued_mo_str, valid_mo_str
-
-
-@app.cell
-def _(pcode, pd, stratus):
-    query = f"SELECT * FROM public.polygon WHERE pcode = '{pcode}'"
-    df_adm = pd.read_sql(query, stratus.get_engine(stage="prod"))
-    adm_name, iso3, adm_level = df_adm.iloc[0][["name", "iso3", "adm_level"]]
-    if adm_level > 0:
-        query = f"SELECT * FROM public.polygon WHERE iso3 = '{iso3}' AND adm_level = 0"
-        df_adm0 = pd.read_sql(query, stratus.get_engine(stage="prod"))
-        adm0_name = df_adm0.iloc[0]["name"]
-        adm_name_str = f"{adm_name} ({adm0_name})"
-    else:
-        adm_name_str = adm_name
-    return adm_name, adm_name_str, iso3
 
 
 @app.cell
@@ -679,7 +768,7 @@ def _(
 
 
 @app.cell
-def _(adm_name, df_compare, plot_comparison, valid_mo_str):
+def _(adm_name_str, df_compare, plot_comparison, valid_mo_str):
     min_year = 2000
     _fig, _ax = plot_comparison(
         df_compare,
@@ -687,7 +776,7 @@ def _(adm_name, df_compare, plot_comparison, valid_mo_str):
         ycol="mean_detrended_era5",
         sizecol="Total Affected",
         colorcol="allocation",
-        title=f"{adm_name}: {valid_mo_str} observed vs. forecasted rainfall,\nsince {min_year}",
+        title=f"{adm_name_str}: {valid_mo_str} observed vs. forecasted rainfall,\nsince {min_year}",
         min_year=min_year,
     )
     _ax
