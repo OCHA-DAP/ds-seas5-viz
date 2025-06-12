@@ -743,7 +743,7 @@ def _(
                 zorder=3,
             )
         if "seas5" in xcol:
-            if 2025 in df.index:
+            if 2025 in df["year"].to_list():
                 current_val = df.set_index("year").loc[2025][xcol]
                 _ax.axvline(
                     current_val, color=current_color, linestyle="--", zorder=-1
