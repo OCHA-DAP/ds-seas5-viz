@@ -887,7 +887,7 @@ def _(
             ycol="mean_detrended_era5",
             sizecol="Total Affected",
             colorcol="allocation",
-            title=f"{adm_name_str} — {valid_mo_str} observed vs. forecasted rainfall\nIssue month: {issued_mo_str}",
+            title=f"{adm_name_str} — $\\bf{{{valid_mo_str}}}$ observed vs. forecasted rainfall\nIssue month: $\\bf{{{issued_mo_str}}}$",
             min_year=min_year,
             show_high_tercile=True,
         )
