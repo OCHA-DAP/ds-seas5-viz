@@ -879,6 +879,7 @@ def _(
     valid_mo_str,
 ):
     min_year = 2000
+    title = f"{adm_name_str} — $\\bf{{{valid_mo_str}}}$ observed vs. forecasted rainfall\nIssue month: $\\bf{{{issued_mo_str}}}$"
 
     if hazard_mode == "Flood":
         _fig, _ax = plot_comparison(
@@ -887,7 +888,7 @@ def _(
             ycol="mean_detrended_era5",
             sizecol="Total Affected",
             colorcol="allocation",
-            title=f"{adm_name_str} — $\\bf{{{valid_mo_str}}}$ observed vs. forecasted rainfall\nIssue month: $\\bf{{{issued_mo_str}}}$",
+            title=title,
             min_year=min_year,
             show_high_tercile=True,
         )
@@ -896,7 +897,7 @@ def _(
             df_compare,
             xcol="mean_detrended_seas5",
             ycol="mean_detrended_era5",
-            title=f"{adm_name_str} — {valid_mo_str} observed vs. forecasted rainfall\nIssue month: {issued_mo_str}",
+            title=title,
             min_year=2000,
             show_high_tercile=False,
             show_low_tercile=True,
