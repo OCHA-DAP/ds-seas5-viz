@@ -33,6 +33,14 @@ issued_month = 6
 valid_months = [7, 8, 9]
 ```
 
+## Process EM-DAT
+
+If needed, process new EM-DAT file (downloaded from website as `.xlsx`)
+
+```python
+emdat.process_emdat()
+```
+
 ## SEAS5
 
 ```python

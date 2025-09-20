@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.13.15"
+__generated_with = "0.16.0"
 app = marimo.App(app_title="SEAS5-ERA5-EMDAT")
 
 
@@ -124,13 +124,29 @@ def _(List, detrend_column, pd, stratus):
         df: pd.DataFrame,
         valid_months: List[int],
     ):
-        df_monthly = df[df["valid_date"].dt.month.isin(valid_months)]
-        df_yearly = (
-            df_monthly.groupby(df_monthly["valid_date"].dt.year)["mean"]
-            .mean()
-            .reset_index()
+        df_monthly = df[df["valid_date"].dt.month.isin(valid_months)].copy()
+        df_monthly["year"] = df_monthly["valid_date"].dt.year
+        df_monthly["month"] = df_monthly["valid_date"].dt.month
+
+        # Ensure each year has *all* valid months
+        complete_years = (
+            df_monthly.groupby("year")["month"]
+            .nunique()
+            .loc[lambda x: x == len(valid_months)]
+            .index
         )
-        df_yearly = df_yearly.rename(columns={"valid_date": "year"})
+        df_complete = df_monthly[df_monthly["year"].isin(complete_years)]
+
+        if 1 in valid_months and 12 in valid_months:
+
+            def shift_valid_year(row):
+                year = row["year"]
+                return year if row["month"] >= 7 else year - 1
+
+            df_complete["season_year"] = df_complete.apply(
+                shift_valid_year, axis=1
+            )
+        df_yearly = df_complete.groupby("year")["mean"].mean().reset_index()
         df_yearly = detrend_column(df_yearly, "mean", index_col="year")
         return df_yearly
 
@@ -138,7 +154,7 @@ def _(List, detrend_column, pd, stratus):
 
 
 @app.cell(hide_code=True)
-def _(List, detrend_column, pd, stratus):
+def _(List, pd, stratus):
     # SEAS5
 
     def load_seas5(
@@ -183,10 +199,10 @@ def _(List, detrend_column, pd, stratus):
             .reset_index()
         )
         df_yearly = df_yearly.rename(columns={"issued_date": "year"})
-        max_year = df_yearly["year"].max()
-        df_yearly = detrend_column(
-            df_yearly, "mean", index_col="year", max_index=max_year - 1
-        )
+        # max_year = df_yearly["year"].max()
+        # df_yearly = detrend_column(
+        #     df_yearly, "mean", index_col="year", max_index=max_index
+        # )
         return df_yearly
 
     return aggregate_seas5_yearly, load_seas5
@@ -334,16 +350,11 @@ def _(pd, stratus):
 
 
 @app.cell
-def _(adm0_options, calendar, mo):
+def _(adm0_options, mo):
     adm0_dropdown = mo.ui.dropdown(
         options=adm0_options, label="Select country:", value="Ethiopia"
     )
-    issued_month_dropdown = mo.ui.dropdown(
-        options={calendar.month_abbr[x]: x for x in range(1, 13)},
-        label="Select issued month:",
-        value="May",
-    )
-    return adm0_dropdown, issued_month_dropdown
+    return (adm0_dropdown,)
 
 
 @app.cell
@@ -381,16 +392,13 @@ def _(adm_level_dropdown):
 
 
 @app.cell
-def _(mo):
-    mo.md(
-        r"""_Note that EM-DAT data and CERF allocations are only at a national-level, so may not correspond to the specific subnational adminitrative division selected._"""
-    )
-    return
+def _(adm_level_dropdown):
+    adm_level = adm_level_dropdown.value
+    return (adm_level,)
 
 
 @app.cell
-def _(adm0_pcode, adm_level_dropdown, df_adm1, iso3, mo):
-    adm_level = adm_level_dropdown.value
+def _(adm0_pcode, adm_level, df_adm1, iso3, mo):
     if adm_level > 0 and adm0_pcode is not None:
         adm1_options = {
             row["name"]: row["pcode"]
@@ -402,14 +410,8 @@ def _(adm0_pcode, adm_level_dropdown, df_adm1, iso3, mo):
     adm1_dropdown = mo.ui.dropdown(
         options=adm1_options, label="Select admin1:", value=None
     )
-
-    return adm1_dropdown, adm_level
-
-
-@app.cell
-def _(adm1_dropdown):
     adm1_dropdown
-    return
+    return (adm1_dropdown,)
 
 
 @app.cell
@@ -484,6 +486,16 @@ def _(mo):
 
 
 @app.cell
+def _(calendar, mo):
+    issued_month_dropdown = mo.ui.dropdown(
+        options={calendar.month_abbr[x]: x for x in range(1, 13)},
+        label="Issued month:",
+        value="May",
+    )
+    return (issued_month_dropdown,)
+
+
+@app.cell
 def _(issued_month_dropdown):
     issued_month_dropdown
     return
@@ -496,23 +508,41 @@ def _(issued_month_dropdown):
 
 
 @app.cell
-def _(calendar, issued_month, mo):
-    valid_month_options = [(issued_month + x - 1) % 12 + 1 for x in range(7)]
-    valid_month_widget = mo.ui.multiselect(
-        options={calendar.month_abbr[x]: x for x in valid_month_options},
-        label="Select valid months:",
-        value=[
-            calendar.month_abbr[(issued_month + x - 1) % 12 + 1]
-            for x in range(1, 4)
-        ],
+def _(mo):
+    valid_months_slider = mo.ui.range_slider(
+        steps=range(7), label="Leadtimes", value=(1, 3)
     )
-    valid_month_widget
-    return (valid_month_widget,)
+    return (valid_months_slider,)
 
 
 @app.cell
-def _(valid_month_widget):
-    valid_months = valid_month_widget.value
+def _(mo, valid_mo_str, valid_months_note, valid_months_slider):
+    mo.hstack(
+        [
+            valid_months_slider,
+            mo.md(f"**{valid_mo_str}**"),
+            mo.md(valid_months_note),
+        ],
+        justify="start",
+    )
+    return
+
+
+@app.cell
+def _(issued_month, valid_months_slider):
+    # valid_months = valid_month_widget.value
+    valid_months = [
+        (issued_month + x - 1) % 12 + 1
+        for x in range(
+            valid_months_slider.value[0], valid_months_slider.value[1] + 1
+        )
+    ]
+    if 1 in valid_months and 12 in valid_months:
+        valid_months_shift = [(x - 7) % 12 + 1 for x in valid_months]
+        valid_months_shift = sorted(valid_months_shift)
+        valid_months = [(x + 5) % 12 + 1 for x in valid_months_shift]
+    else:
+        valid_months = sorted(valid_months)
     return (valid_months,)
 
 
@@ -530,44 +560,6 @@ def _(calendar, issued_month, valid_months):
 
 
 @app.cell
-def _(mo, valid_mo_str):
-    mo.md(f"""Selected valid months: **{valid_mo_str}**""")
-    return
-
-
-@app.cell
-def _(mo):
-    mo.md(r"""### Hazard""")
-    return
-
-
-@app.cell
-def _(mo):
-    hazard_selector = mo.ui.radio(options=["Flood", "Drought"], value="Flood")
-    return (hazard_selector,)
-
-
-@app.cell
-def _(hazard_selector):
-    hazard_selector
-    return
-
-
-@app.cell
-def _(mo):
-    mo.md(
-        r"""_Note that EM-DAT data and CERF allocations are only currently shown for "Flood"._"""
-    )
-    return
-
-
-@app.cell
-def _(hazard_selector):
-    hazard_mode = hazard_selector.value
-    return (hazard_mode,)
-
-
-@app.cell
 def _(load_seas5, pcode):
     df_seas5_all = load_seas5(pcode=pcode)
     return (df_seas5_all,)
@@ -575,10 +567,42 @@ def _(load_seas5, pcode):
 
 @app.cell
 def _(aggregate_seas5_yearly, df_seas5_all, issued_month, valid_months):
-    df_seas5 = aggregate_seas5_yearly(
-        df_seas5_all, issued_month=issued_month, valid_months=valid_months
+    df_seas5_season = aggregate_seas5_yearly(
+        df_seas5_all,
+        issued_month=issued_month,
+        valid_months=valid_months,
+    )
+    if min(valid_months) < issued_month and 12 not in valid_months:
+        df_seas5_season["year"] += 1
+
+    return (df_seas5_season,)
+
+
+@app.cell
+def _(detrend_column, df_seas5_season, show_current_forecast):
+    max_year = df_seas5_season["year"].max()
+    max_index = max_year - 1 if show_current_forecast else max_year
+    df_seas5 = detrend_column(
+        df_seas5_season, "mean", index_col="year", max_index=max_index
     )
     return (df_seas5,)
+
+
+@app.cell
+def _(df_seas5_season):
+    forecast_issued_year = df_seas5_season["year"].max()
+    return (forecast_issued_year,)
+
+
+@app.cell
+def _(df_era5, forecast_issued_year):
+    show_current_forecast = forecast_issued_year not in df_era5["year"].values
+    valid_months_note = (
+        ""
+        if show_current_forecast
+        else "_reanalysis available; current forecast line will not be shown_"
+    )
+    return show_current_forecast, valid_months_note
 
 
 @app.cell
@@ -594,7 +618,8 @@ def _(aggregate_era5_yearly, df_era5_all, valid_months):
 
 
 @app.cell
-def _(df_era5_all):
+def _(calendar, df_era5_all):
+    # just for the seasonality plot
     max_full_year = df_era5_all["valid_date"].dt.year.max() - 1
     df_era5_monthly = (
         df_era5_all[df_era5_all["valid_date"].dt.year <= max_full_year]
@@ -602,15 +627,10 @@ def _(df_era5_all):
         .mean()
         .reset_index()
     )
-    return df_era5_monthly, max_full_year
-
-
-@app.cell
-def _(calendar, df_era5_monthly):
     df_era5_monthly["valid_month_str"] = df_era5_monthly["valid_date"].apply(
         lambda x: calendar.month_abbr[x]
     )
-    return
+    return df_era5_monthly, max_full_year
 
 
 @app.cell
@@ -647,6 +667,106 @@ def _(df_compare):
 
 @app.cell
 def _(mo):
+    mo.md(r"""### Plot options""")
+    return
+
+
+@app.cell
+def _(mo):
+    high_tercile_selector = mo.ui.checkbox(label="Upper tercile")
+    low_tercile_selector = mo.ui.checkbox(label="Lower tercile")
+    return high_tercile_selector, low_tercile_selector
+
+
+@app.cell
+def _(high_tercile_selector, low_tercile_selector, mo):
+    mo.hstack(
+        [
+            mo.md("Show tercile boundaries:"),
+            mo.vstack([high_tercile_selector, low_tercile_selector], gap=0),
+        ],
+        align="center",
+    )
+    return
+
+
+@app.cell
+def _(high_tercile_selector, low_tercile_selector):
+    show_high_tercile = high_tercile_selector.value
+    show_low_tercile = low_tercile_selector.value
+    return show_high_tercile, show_low_tercile
+
+
+@app.cell
+def _(adm_level, mo):
+    allow_impact = adm_level == 0
+    options = ["Flood"] if allow_impact else []
+
+    hazard_dropdown = mo.ui.dropdown(
+        options=options,
+        label="Display impact data: ",
+    )
+    hazard_note = (
+        "" if allow_impact else "_impact data only available for ADM0_"
+    )
+    return hazard_dropdown, hazard_note
+
+
+@app.cell
+def _(hazard_dropdown, hazard_note, mo):
+    mo.hstack(
+        [
+            hazard_dropdown,
+            mo.md(
+                hazard_note,
+            ),
+        ],
+        justify="start",
+    )
+    return
+
+
+@app.cell
+def _(hazard_dropdown):
+    hazard = hazard_dropdown.value
+    return (hazard,)
+
+
+@app.cell
+def _(mo):
+    min_year_selector = mo.ui.dropdown(
+        options=range(1981, 2011),
+        allow_select_none=False,
+        value=2000,
+        label="Start year: ",
+    )
+    return (min_year_selector,)
+
+
+@app.cell
+def _(min_year_note, min_year_selector, mo):
+    mo.hstack([min_year_selector, mo.md(min_year_note)], justify="start")
+    return
+
+
+@app.cell
+def _(min_year_selector):
+    min_year = min_year_selector.value
+    return (min_year,)
+
+
+@app.cell
+def _(min_year):
+    min_year_note = (
+        "_note that impact data before 2000 is not shown_"
+        if min_year < 2000
+        else ""
+    )
+    return (min_year_note,)
+
+
+@app.cell
+def _(mo):
     mo.md(r"""## Plot""")
     return
 
@@ -673,7 +793,7 @@ def _(np):
     return cerf_color_mapping, current_color, tercile_colors
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     cerf_color_mapping,
     col_to_label,
@@ -692,8 +812,9 @@ def _(
         rotation: int = 0,
         min_year: int = None,
         title: str = None,
-        show_high_tercile: bool = True,
+        show_high_tercile: bool = False,
         show_low_tercile: bool = False,
+        show_current_forecast: bool = True,
     ):
         _fig, _ax = plt.subplots(dpi=200, figsize=(7, 7))
         if min_year is not None:
@@ -788,22 +909,24 @@ def _(
                 rotation=rotation,
                 zorder=3,
             )
-        if "seas5" in xcol:
-            if 2025 in df["year"].to_list():
-                current_val = df.set_index("year").loc[2025][xcol]
-                _ax.axvline(
-                    current_val, color=current_color, linestyle="--", zorder=-1
-                )
-                _ax.annotate(
-                    " 2025 forecast",
-                    (current_val, ylim[0]),
-                    rotation=90,
-                    va="bottom",
-                    ha="right",
-                    color=current_color,
-                    zorder=-1,
-                    fontstyle="italic",
-                )
+        # if show_current_forecast and "seas5" in xcol:
+        if show_current_forecast:
+            # if 2025 in df["year"].to_list():
+            forecast_year = df["year"].max()
+            current_val = df.set_index("year").loc[forecast_year][xcol]
+            _ax.axvline(
+                current_val, color=current_color, linestyle="--", zorder=-1
+            )
+            _ax.annotate(
+                f" {forecast_year} forecast",
+                (current_val, ylim[0]),
+                rotation=90,
+                va="bottom",
+                ha="right",
+                color=current_color,
+                zorder=-1,
+                fontstyle="italic",
+            )
         _ax.set_xlabel(col_to_label.get(xcol, xcol))
         _ax.set_ylabel(col_to_label.get(ycol, ycol))
         if title is not None:
@@ -812,12 +935,27 @@ def _(
         _ax.spines["right"].set_visible(False)
         _ax.set_xlim(xlim)
         _ax.set_ylim(ylim)
-        if colorcol is not None and sizecol is not None:
-            legend_x = xlim[0] + xrange * 0.18
+
+        if sizecol is not None or colorcol is not None:
 
             def get_legend_y(row_num):
                 return ylim[1] - yrange * 0.04 - yrange * row_num * 0.03
 
+            legend_x = xlim[0] + xrange * 0.18
+
+            def plot_legend_box(xstart, xwidth):
+                rect = mpatches.Rectangle(
+                    (xstart, get_legend_y(4.7)),
+                    xwidth,
+                    yrange * 0.16,
+                    linewidth=0.5,
+                    color="white",
+                    zorder=0,
+                    alpha=0.5,
+                )
+                _ax.add_patch(rect)
+
+        if colorcol is not None:
             _ax.annotate(
                 "CERF allocation:",
                 (legend_x, get_legend_y(0)),
@@ -835,35 +973,37 @@ def _(
                     color=color,
                     fontsize=6,
                 )
-            if sizecol is not None:
-                x_legend_bubble = legend_x - xrange * 0.08
-                y_legend_bubble = get_legend_y(2)
-                _ax.scatter(
-                    [x_legend_bubble],
-                    [y_legend_bubble],
-                    s=[max_bubble_size],
-                    facecolor="none",
-                    edgecolor="k",
-                    linewidth=0.5,
-                )
-                _ax.annotate(
-                    f"{sizecol}:\n{max_size_value:,.0f}",
-                    (x_legend_bubble, y_legend_bubble),
-                    ha="center",
-                    va="center",
-                    fontstyle="italic",
-                    fontsize=6,
-                )
-            rect = mpatches.Rectangle(
-                (legend_x - xrange * 0.16, get_legend_y(4.7)),
-                xrange * 0.32,
-                yrange * 0.16,
+            plot_legend_box(legend_x, xrange * 0.16)
+        if sizecol is not None:
+            x_legend_bubble = legend_x - xrange * 0.08
+            y_legend_bubble = get_legend_y(2)
+            _ax.scatter(
+                [x_legend_bubble],
+                [y_legend_bubble],
+                s=[max_bubble_size],
+                facecolor="none",
+                edgecolor="k",
                 linewidth=0.5,
-                color="white",
-                zorder=0,
-                alpha=0.5,
             )
-            _ax.add_patch(rect)
+            _ax.annotate(
+                f"{sizecol}:\n{max_size_value:,.0f}",
+                (x_legend_bubble, y_legend_bubble),
+                ha="center",
+                va="center",
+                fontstyle="italic",
+                fontsize=6,
+            )
+            plot_legend_box(legend_x - xrange * 0.16, xrange * 0.16)
+            # rect = mpatches.Rectangle(
+            #     (legend_x - xrange * 0.16, get_legend_y(4.7)),
+            #     xrange * 0.32,
+            #     yrange * 0.16,
+            #     linewidth=0.5,
+            #     color="white",
+            #     zorder=0,
+            #     alpha=0.5,
+            # )
+            # _ax.add_patch(rect)
         return (_fig, _ax)
 
     return (plot_comparison,)
@@ -873,36 +1013,165 @@ def _(
 def _(
     adm_name_str,
     df_compare,
-    hazard_mode,
+    hazard,
+    iso3,
     issued_mo_str,
+    min_year,
     plot_comparison,
+    show_current_forecast,
+    show_high_tercile,
+    show_low_tercile,
     valid_mo_str,
 ):
-    min_year = 2000
     title = f"{adm_name_str} — $\\bf{{{valid_mo_str}}}$ observed vs. forecasted rainfall\nIssue month: $\\bf{{{issued_mo_str}}}$"
 
-    if hazard_mode == "Flood":
-        _fig, _ax = plot_comparison(
-            df_compare,
-            xcol="mean_detrended_seas5",
-            ycol="mean_detrended_era5",
-            sizecol="Total Affected",
-            colorcol="allocation",
-            title=title,
-            min_year=min_year,
-            show_high_tercile=True,
-        )
+    CERF_ISO3S = ["SSD", "ETH"]
+
+    if hazard == "Flood":
+        sizecol = "Total Affected"
+        if iso3 in CERF_ISO3S:
+            colorcol = "allocation"
+        else:
+            colorcol = None
     else:
-        _fig, _ax = plot_comparison(
-            df_compare,
-            xcol="mean_detrended_seas5",
-            ycol="mean_detrended_era5",
-            title=title,
-            min_year=2000,
-            show_high_tercile=False,
-            show_low_tercile=True,
-        )
+        sizecol, colorcol = None, None
+
+    _fig, _ax = plot_comparison(
+        df_compare,
+        xcol="mean_detrended_seas5",
+        ycol="mean_detrended_era5",
+        sizecol=sizecol,
+        colorcol=colorcol,
+        title=title,
+        min_year=min_year,
+        show_high_tercile=show_high_tercile,
+        show_low_tercile=show_low_tercile,
+        show_current_forecast=show_current_forecast,
+    )
+
     _fig
+    return
+
+
+@app.cell
+def _(df_compare, min_year):
+    if min_year is not None:
+        df_ref = df_compare[df_compare["year"] >= min_year]
+    else:
+        df_ref = df_compare
+
+    df_ref = df_ref.dropna(
+        subset=["mean_detrended_seas5", "mean_detrended_era5"]
+    )
+
+    metrics = {}
+    metrics.update(
+        {
+            "corr": df_ref[["mean_detrended_seas5", "mean_detrended_era5"]]
+            .corr()
+            .iloc[0, 1]
+        }
+    )
+
+    for _tercile in ["upper", "lower"]:
+        q = 2 / 3 if _tercile == "upper" else 1 / 3
+        seas5_thresh, era5_thresh = df_ref[
+            ["mean_detrended_seas5", "mean_detrended_era5"]
+        ].quantile(q)
+        if _tercile == "upper":
+            pp = df_ref["mean_detrended_seas5"] > seas5_thresh
+            p = df_ref["mean_detrended_era5"] > era5_thresh
+        else:
+            pp = df_ref["mean_detrended_seas5"] < seas5_thresh
+            p = df_ref["mean_detrended_era5"] < era5_thresh
+        tp = pp & p
+        tpr = tp.sum() / p.sum()
+        metrics.update({f"{_tercile}_tpr": tpr})
+    return df_ref, metrics
+
+
+@app.function
+def calculate_one_group_rp(group, col_name: str = "q", ascending: bool = True):
+    """Calculate the empirical RP for a single group.
+
+    Parameters
+    ----------
+    group : pd.DataFrame
+        The group for which to calculate the RP.
+    col_name : str, optional
+        The name of the column for which to calculate the RP, by default "q".
+    ascending : bool, optional
+        Whether to rank the column in ascending order, by default True.
+        Should be False for cases where a high number is severe
+        (e.g. precipitation for flooding), and True for cases where a low
+        number is severe (e.g. precipitation for drought).
+
+    Returns
+    -------
+    pd.DataFrame
+        The input group with the RP columns added.
+    """
+    group[f"{col_name}_rank"] = group[col_name].rank(ascending=ascending)
+    group[f"{col_name}_rp"] = (len(group) + 1) / group[f"{col_name}_rank"]
+    return group
+
+
+@app.cell
+def _(df_compare, df_ref, np, show_current_forecast):
+    rps = {}
+
+    if show_current_forecast:
+        df_rp_calc = df_ref.copy()
+        forecast_year = df_compare["year"].max()
+        current_val = df_compare.set_index("year").loc[forecast_year][
+            "mean_detrended_seas5"
+        ]
+        for _tercile in ["upper", "lower"]:
+            df_rp_calc = calculate_one_group_rp(
+                df_rp_calc,
+                col_name="mean_detrended_seas5",
+                ascending=_tercile == "lower",
+            )
+            df_rp_calc = df_rp_calc.sort_values("mean_detrended_seas5")
+            rp = np.interp(
+                current_val,
+                df_rp_calc["mean_detrended_seas5"],
+                df_rp_calc["mean_detrended_seas5_rp"],
+            )
+            rps.update({_tercile: rp})
+    return (rps,)
+
+
+@app.cell
+def _(rps, show_current_forecast):
+    if show_current_forecast:
+        rp_table_str = f"""
+        | Upper | Lower |
+        |-|-|
+        | {rps["upper"]:.1f} years | {rps["lower"]:.1f} years|
+        """
+    else:
+        rp_table_str = "No RP shown as forecast no longer relevant"
+    return (rp_table_str,)
+
+
+@app.cell
+def _(metrics, mo, rp_table_str):
+    mo.md(
+        f"""
+    ### Return Period
+
+    {rp_table_str}
+
+    ### Accuracy Metrics
+
+    | Correlation | Upper tercile F1 | Lower tercile F1 |
+    |-|-|-|
+    | {metrics["corr"]:.2f} | {metrics["upper_tpr"]:.2f} | {metrics["lower_tpr"]:.2f} |
+
+    Recall that values less than 0 and 0.33 are _worse than random_ for correlation and F1, respectively.
+    """
+    )
     return
 
 
@@ -912,12 +1181,14 @@ def _(mo):
         r"""
     Notes on reading the plot:
 
+    - The year shown is the year of the _first valid_ month. For example, a forecast issued in Nov 2025 would appear as the year:
+        - 2026 if it is for JFM
+        - 2025 it if is for DJF
+    - If the full reanalysis for the relevant valid months is available, the most recent forecast will not be shown as a vertical line.
+    - The shaded zones at the top, bottom, left, or right of the plots correspond to the upper or lower terciles of the distribution for the reanalysis and reforecast respectively. The tercile boundaries are calculated empricially using only the years shown on the plot (i.e. the years since "Start Year").
+    - Both the reanalysis and reforecast have been de-trended (based on the full reference period since 1981), using a linear curve fit.
     - _[Flood only]_ The size of the bubbles corresponds to the total impact from "Flood" events in the EM-DAT database during that year. The legend shows the size of the largest bubble, and the corresponding maximum impact.
     - _[Flood only]_ Bubbles in red denote years with at least one "Rapid Response" CERF allocation for a "Flood" during that year. **Note that this has only been added for Ethiopia and South Sudan so far, all other countries will just show "pre-CERF".**
-    - The shaded zones at the top, bottom, left, or right of the plots correspond to the upper or lower terciles of the distribution for the reanalysis and reforecast respectively.
-    - A stronger correlation between the reanalysis and the reforecast would indicate a better forecast skill for this issue month / valid months / geography combination.
-    - Both the reanalysis and reforecast have been de-trended (based on the full reference period 1981-2024).
-    - To avoid cluttering the plot and to only show years for which there is EM-DAT data, only years since 2000 are shown.
     """
     )
     return
@@ -949,7 +1220,6 @@ def _(adm_name_str, df_era5_all, df_era5_monthly, max_full_year, plt):
     _ax.spines["top"].set_visible(False)
     _ax.spines["right"].set_visible(False)
     _ax
-
     return
 
 

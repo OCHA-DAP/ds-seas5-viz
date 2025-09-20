@@ -1,7 +1,15 @@
 import duckdb
 import ocha_stratus as stratus
+import pandas as pd
 
 EMDAT_PROC_BLOB_NAME = "emdat/processed/emdat_all.parquet"
+
+
+def process_emdat(local_path: str = "temp/emdat_all.xlsx"):
+    df = pd.read_excel(local_path)
+    stratus.upload_parquet_to_blob(
+        df, EMDAT_PROC_BLOB_NAME, container_name="global"
+    )
 
 
 def load_emdat(
