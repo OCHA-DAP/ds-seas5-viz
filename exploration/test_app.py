@@ -486,11 +486,33 @@ def _(mo):
 
 
 @app.cell
-def _(calendar, mo):
+def _(pd, stratus):
+    query = """
+    SELECT MAX(issued_date) AS latest_date
+    FROM public.seas5;
+    """
+    engine = stratus.get_engine("prod")
+    with engine.connect() as conn:
+        df_latest_issue = pd.read_sql(
+            query,
+            conn,
+        )
+    return (df_latest_issue,)
+
+
+@app.cell
+def _(calendar, df_latest_issue):
+    latest_issued_month = df_latest_issue["latest_date"].iloc[0].month
+    latest_issued_month_str = calendar.month_abbr[latest_issued_month]
+    return (latest_issued_month_str,)
+
+
+@app.cell
+def _(calendar, latest_issued_month_str, mo):
     issued_month_dropdown = mo.ui.dropdown(
         options={calendar.month_abbr[x]: x for x in range(1, 13)},
         label="Issued month:",
-        value="May",
+        value=latest_issued_month_str,
     )
     return (issued_month_dropdown,)
 
@@ -574,7 +596,6 @@ def _(aggregate_seas5_yearly, df_seas5_all, issued_month, valid_months):
     )
     if min(valid_months) < issued_month and 12 not in valid_months:
         df_seas5_season["year"] += 1
-
     return (df_seas5_season,)
 
 
@@ -1168,8 +1189,6 @@ def _(metrics, mo, rp_table_str):
     | Correlation | Upper tercile F1 | Lower tercile F1 |
     |-|-|-|
     | {metrics["corr"]:.2f} | {metrics["upper_tpr"]:.2f} | {metrics["lower_tpr"]:.2f} |
-
-    Recall that values less than 0 and 0.33 are _worse than random_ for correlation and F1, respectively.
     """
     )
     return
@@ -1179,8 +1198,9 @@ def _(metrics, mo, rp_table_str):
 def _(mo):
     mo.md(
         r"""
-    Notes on reading the plot:
+    ### Notes
 
+    #### Plot
     - The year shown is the year of the _first valid_ month. For example, a forecast issued in Nov 2025 would appear as the year:
         - 2026 if it is for JFM
         - 2025 it if is for DJF
@@ -1189,6 +1209,19 @@ def _(mo):
     - Both the reanalysis and reforecast have been de-trended (based on the full reference period since 1981), using a linear curve fit.
     - _[Flood only]_ The size of the bubbles corresponds to the total impact from "Flood" events in the EM-DAT database during that year. The legend shows the size of the largest bubble, and the corresponding maximum impact.
     - _[Flood only]_ Bubbles in red denote years with at least one "Rapid Response" CERF allocation for a "Flood" during that year. **Note that this has only been added for Ethiopia and South Sudan so far, all other countries will just show "pre-CERF".**
+
+    #### Return period
+
+    - Return periods are calculated empirically.
+    - The "upper" return period indicates on average how often a value this high or higher is forecasted (for example, this is appropriate for predicting flood risk).
+    - The "lower" return period indicates on average how often a value this low or lower is forecasted (for example, this is appropriate for predicting drought).
+
+    #### Accuracy metrics
+
+    - For the correlation, values less than 0 are **worse than random**
+    - For the F1 score, values less than 0.33 are **worse than random**, because the threshold is the tercile boundary.
+    - F1 scores are calculated based on predictions and observations in the respective tercile. Because tercile thresholds are set for both the forecast and the reanalysis, there will be the same number of _predicted positive_ and _positive_ years. Thus by definition the F1 score will be the same as the TPR and PPV.
+    - For standard accuracy metric defitions see the table [here](https://en.wikipedia.org/wiki/Confusion_matrix).
     """
     )
     return
