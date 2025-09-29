@@ -3,3 +3,5 @@ isort==6.0.1
 jupyter-black==0.4.0
 pre-commit==4.2.0
 flake8==7.2.0
+ipykernel==6.29.5
+ipywidgets==8.1.7
